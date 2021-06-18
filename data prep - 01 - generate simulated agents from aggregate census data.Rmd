@@ -1,0 +1,122 @@
+---
+title: "Generate Dataset of Simulated Agents from Aggregate Census Data"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE, message = FALSE, cache = FALSE)
+
+rm(list = ls())
+source("main-settings.R")
+
+# Run a local file to load required user-specific settings
+# This file must be located in the main repository directory, and make an 
+# assignment for `data_path` to be used here, which terminates in a "/".
+# Note that the .gitignore ensures that this data will not be pushed to remote.
+source("profile-settings.R")
+```
+
+
+```{r load sim population}
+sim_pop <- read.csv(paste0(data_path, "sim_pop.csv"))
+
+### Align Race/Ethnicity Fields with Application Data --------------------------
+
+# Raw Census data represents marginal sums of race and (Hispanic) ethnicity identity
+# which will lead to double-counting individuals unless backing out the joint distribution.
+
+# Regarding apportioning Hispanic populations, see the census report http://www.census.gov/prod/cen2010/briefs/c2010br-02.pdf 
+# regarding patterns of joint distribution of self-reports of race and Hispanic ethnicity.
+#
+# The categories that we must report are White, Black, Hispanic, Asian, and Other. Based on the report,
+# we count Hispanics as all those self-reporting Hispanic, as well as a portion of single and multiple
+# race individuals. Except for white non-Hispanic counts which already have Hispanic individuals 
+# separte, We will portion the other race groups based on Table 2 of the above report. See
+# the file "./data/Census Breakdown of Race and Hispanic Ethnicity.xlsx" which creates these proportions
+# from that table
+
+table(sim_pop$Type)
+
+sim_race_eth_split <- 
+  sim_pop %>% 
+  filter(!Type == "White Alone") %>% 
+  select(-poor_tot, -not_poor_tot, -Total) %>% 
+  rename(geoid10 = GEOID, race_cat = Type) %>% 
+  gather(income_cat, count, -geoid10, -race_cat) %>% 
+  spread(race_cat, count) %>% 
+  mutate(Hispanic         = `Hispanic or Latino`,
+         White            = `White Alone (not Hispanic or Latino)`,
+         African_American = (0.968*`Black Alone`) %>% round(0),
+         Asian            = (0.986*`Asian Alone`) %>% round(0),
+         Other            = (0.766*`American Indian Alone` + 
+                             0.892*`Native Hawaiian Alone` + 
+                             0.032*`Some Other Race Alone` +
+                             0.662*`Two or More Races`) %>% round(0),
+         All = Hispanic + White + African_American + Asian + Other)
+
+# Examine the structure of the resulting constructions
+head(sim_race_eth_split)  
+
+### Align income field name and values to that in the application data ---------
+
+sim_income_cat <- 
+  sim_race_eth_split %>% 
+  select(geoid10, income_cat, Hispanic, White, African_American, Asian, Other) %>% 
+  mutate(i_FPL_cutoff = case_when(income_cat == "under_50"      ~     "0-50%",
+                                  income_cat == "between_50_74" ~    "50-75%",
+                                  income_cat == "between_75_99" ~   "75-100%",
+                                  income_cat == "above_1"       ~ "above fpl")) %>% 
+  select(-income_cat)
+
+### Reshape the data to long format --------------------------------------------
+  
+sim_counts <- 
+  sim_income_cat %>% 
+  gather(race_recode, count, -geoid10, -i_FPL_cutoff)
+
+### Adjust the population down to represent just 3 and 4 year olds -------------
+
+sim_counts <- 
+  sim_counts %>% 
+  mutate(count = ((2/6)*count) %>% round(0))
+  # "2/6" is because there are 2 ages--3 and 4--which are within the population
+  # that we want to count among the "less than 6" population that is represented
+  # in table B17024 (see https://www.socialexplorer.com/data/ACS2017_5yr/metadata/?ds=ACS17_5yr&table=B17024)
+
+### Generate individual simulated agents from aggregate data -------------------
+
+sim_counts <- data.table(sim_counts)
+
+sim_indiv <-
+  sim_counts %>% 
+  .[rep(1:.N, count)] %>% 
+  select(-count)
+
+### Check Constructions --------------------------------------------------------
+
+sum(sim_counts$count)
+nrow(sim_indiv)
+
+sim_counts %>% head(1)
+sim_indiv[geoid10      == geoid10[1] &
+          i_FPL_cutoff == i_FPL_cutoff[1] &
+          race_recode  == race_recode[1]] %>% 
+  nrow()
+
+### Generate IDs for each sim file to confirm these data to the real application data
+
+sim_counts[, recruit_ID := paste0("c", 1:.N)]
+sim_indiv[,  recruit_ID := paste0("s", 1:.N)]
+
+### Save
+
+save(sim_counts, sim_indiv, 
+     file = glue("{data_path}sim_pop_files.Rda"))
+
+```
+

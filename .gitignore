@@ -1,3 +1,12 @@
+# Output files with data
+*.xlsx
+!Census\ Breakdown*.xlsx
+*.csv
+*.Rda
+*.png
+!logo.PNG
+!*TRACT-CAR.csv.bz2
+
 # History files
 .Rhistory
 .Rapp.history
@@ -6,6 +15,7 @@
 .RData
 
 # User-specific files
+profile-settings.R
 .Ruserdata
 
 # Example code in package build process
@@ -24,6 +34,9 @@
 vignettes/*.html
 vignettes/*.pdf
 
+# Knit documents, given that they can contain data
+*.html
+
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
 .httr-oauth
 
@@ -34,6 +47,7 @@ vignettes/*.pdf
 # Temporary files created by R markdown
 *.utf8.md
 *.knit.md
+.Rproj.user
 
-# R Environment Variables
-.Renviron
+# Other temporary files
+.swp

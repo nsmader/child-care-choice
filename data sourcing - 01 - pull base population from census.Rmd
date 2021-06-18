@@ -1,0 +1,174 @@
+---
+title: "Pull Census Data to Form Base Population of Program-Eligible Families"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, error = FALSE, message = FALSE, cache = FALSE)
+
+source("main-settings.R")
+
+# Run a local file to load required user-specific settings
+# This file must be located in the main repository directory, and make an 
+# assignment for `data_path` to be used here, which terminates in a "/".
+# Note that the .gitignore ensures that this data will not be pushed to remote.
+source("profile-settings.R")
+census_api_key(census_key)
+```
+
+
+```{r}
+# /!\ NSM: This code chunk is obviously useful for parsing table data. However,
+# it was clearly orphaned, as no `vars` object was yet loaded in the original
+# script
+# vars <- 
+#   vars %>% 
+#   mutate(label = 
+#            label %>% 
+#            str_replace_all("Estimate!!", "") %>% 
+#            str_replace_all("!!", " "),
+#          table = str_extract(vars$name, "[[:alnum:]]*"),
+#          full_label = paste0(label, " | ", concept) %>% 
+#            str_replace_all("\\: \\| ", "\\: "))
+
+get_variable_full_label <- function(variable_name) {
+  # variable name example B01001C_020
+  filtered <- vars %>% filter(name == variable_name)
+  if(nrow(filtered) > 0){
+    return(filtered[["full_label"]])
+  } else {
+    print("variable not found")
+  }
+}
+```
+
+```{r pull 0-5 population by poverty and race}
+get_pov_by_race_ethnicity <- function(target_vector) {
+  #target acs table info
+  tbl_ls <- c("", "A", "B", "C", "D", "E", "F", "G", "H", "I")
+  tbl_descript <- c("Total", "White Alone", "Black Alone", "American Indian Alone",
+                    "Asian Alone", "Native Hawaiian Alone", "Some Other Race Alone",
+                    "Two or More Races", "White Alone (not Hispanic or Latino)",
+                    "Hispanic or Latino")
+  #extract race/ethnicity, poverty, under 6 crosstabs
+  for (i in 1:length(tbl_ls)){
+    cur_tbl_id <- paste0("B17001", tbl_ls[i])
+    cur_descript <- tbl_descript[i]
+    cur_tbl <- get_acs(geography = "tract",
+                       table = cur_tbl_id,
+                       state = "TX",
+                       county = "Harris County",
+                       cache_table = TRUE) %>% 
+      mutate(sub_variable = str_extract(variable, "_[0-9]*")) %>% 
+      filter(sub_variable %in% target_vector) %>% 
+      summarize(tmp = sum(estimate))
+    
+    cur_tbl[[cur_descript]] <- cur_tbl$tmp
+    cur_tbl <- cur_tbl %>% select(-tmp)
+    if(i == 1){
+      big_tbl <- cur_tbl
+    } else {
+      big_tbl <- big_tbl %>% left_join(cur_tbl, by = "GEOID")
+    }
+  }
+  
+  big_tbl <- 
+    big_tbl %>% 
+    pivot_longer(`White Alone`:`Hispanic or Latino`,
+                 names_to = "Type", 
+                 values_to = "Value")
+  return(big_tbl)
+}
+```
+
+
+```{r Get age to poverty ratios by tract}
+# Note: we assume same proportions for all races
+get_income_pov_ratios <- function() {
+  #target acs table info
+  vars_17024 <- c("B17024_002", "B17024_003", "B17024_004", "B17024_005") 
+  #under 6 yrs       total,        under .5, .50 to .74, .75 to .99
+  
+  cur_tbl <- get_acs(geography = "tract",
+                     variables = vars_17024,
+                     state = "TX",
+                     county = "Harris County",
+                     cache_table = TRUE)
+  
+  #manipulate data to get ratios
+  wide_tbl <- 
+    cur_tbl %>% 
+    pivot_wider(id_col = GEOID, 
+                names_from = variable, 
+                values_from = estimate)
+
+  proportion_tbl <- wide_tbl %>% 
+    mutate_at(vars(B17024_003:B17024_005), 
+              function(x) (x / wide_tbl$B17024_002))
+  
+  #impute missing data with means (tracts w/ zero population)
+  for (variable in vars_17024){
+    proportion_tbl[[variable]][is.na(proportion_tbl[[variable]])] <- 
+      mean(proportion_tbl[[variable]], na.rm = TRUE)
+  }
+  return(proportion_tbl)
+}
+```
+
+```{r generate the simulated population}
+
+gen_simulated_population <- function() {
+  poor_var     <- c("_004", "_005", "_018", "_019")
+  not_poor_var <- c("_033", "_034", "_047", "_048")
+  
+  poor_tbl      <- get_pov_by_race_ethnicity(poor_var) 
+  not_poor_tbl  <- get_pov_by_race_ethnicity(not_poor_var) 
+  pov_level_tbl <- get_income_pov_ratios()
+  
+  poor_tbl <-
+    poor_tbl %>% 
+    left_join(pov_level_tbl,
+              by = "GEOID") %>% 
+    mutate(under_50      = Value * B17024_003 / (B17024_003 + B17024_004 + B17024_005),
+           between_50_74 = Value * B17024_004 / (B17024_003 + B17024_004 + B17024_005),
+           between_75_99 = Value * B17024_005 / (B17024_003 + B17024_004 + B17024_005))
+  
+  not_poor_tbl <- 
+    not_poor_tbl %>% 
+    rename(above_1 = Value, 
+           not_poor_tot = Total)
+  
+  sim_tbl <- (poor_tbl %>% 
+                select(-Value, -B17024_003, -B17024_004, -B17024_005) %>% 
+                rename(poor_tot = Total, 
+                       Total = B17024_002)) %>% 
+    left_join(not_poor_tbl)
+  
+  #note some census tracts have 0 people in poverty across all racial groups, such as 17031010400
+  #this sets those groups with missing values to 0
+  sim_tbl[is.na(sim_tbl)] <- 0
+  
+  sim_pop <-
+    sim_tbl %>% 
+    mutate(under_50      = floor(under_50),
+           between_50_74 = floor(between_50_74),
+           between_75_99 = floor(between_75_99))
+  
+  return(sim_pop)
+}
+```
+
+```{r run pulls and save}
+#sim pop is for every tract in Chicago and gives an estimate of 
+#the number of 0 to 5 year olds by race and poverty status
+sim_pop <- gen_simulated_population()
+fwrite(sim_pop,
+       glue("{data_path}sim_pop.csv"))
+```
+
+
