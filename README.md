@@ -20,4 +20,5 @@ Citation: Saxon, James, Julia Koschinsky, Karina Acosta, Vidal Anguiano, Luc Ans
 
 The shapefile of all Texas Census tracts--tl_2020_48_tract.zip--was downloaded from the [Census TIGER/Line Shapefiles webpage](https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html). Note that the FIPS code for Harris County--the seat of Houston--is 48201, for use in extracting just relevant tracts from the larger shapefile.
 
-
+## Provider Data
+Provider data downloaded from Texas Department of Health and Humand Services child care search website on June 16, 2021. Geocoding used open street maps with geocoder Python package.

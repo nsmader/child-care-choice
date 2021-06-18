@@ -2,6 +2,7 @@
 *.xlsx
 !Census\ Breakdown*.xlsx
 *.csv
+!provider*.csv
 *.Rda
 *.png
 !logo.PNG
@@ -51,3 +52,4 @@ vignettes/*.pdf
 
 # Other temporary files
 .swp
+.DS_Store
