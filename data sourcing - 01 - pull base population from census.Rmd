@@ -56,7 +56,7 @@ get_pov_by_race_ethnicity <- function(target_vector) {
                     "Two or More Races", "White Alone (not Hispanic or Latino)",
                     "Hispanic or Latino")
   #extract race/ethnicity, poverty, under 6 crosstabs
-  for (i in 1:length(tbl_ls)){
+  for (i in seq_along(tbl_ls)) {
     cur_tbl_id <- paste0("B17001", tbl_ls[i])
     cur_descript <- tbl_descript[i]
     cur_tbl <- get_acs(geography = "tract",
